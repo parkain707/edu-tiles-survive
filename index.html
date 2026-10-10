@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EduTiles: 지식의 땅 🌏 [초등 6학년 2학기 사회: 경제와 세계]</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════════════════════════════════════
+       TOP HUD
+       ══════════════════════════════════════════ -->
+  <header id="hud">
+    <div id="hud-left">
+      <div id="game-title">🌏 EduTiles: 6-2 경제와 세계 탐험</div>
+      <div id="turn-display">턴 1</div>
+      <div id="student-badge" title="현재 탐험가 (클릭하여 변경)">👤 <span id="current-student-name">게스트</span></div>
+    </div>
+    <!-- Resource badges: built dynamically by UIManager.buildHUD() -->
+    <div id="hud-resources"></div>
+    <div id="hud-right">
+      <button class="btn btn-sm" id="btn-pause" title="게임 일시정지">⏸️ 일시정지</button>
+      <button class="btn btn-sm btn-primary" id="btn-guide-open">❓ 게임 방법</button>
+      <button class="btn btn-sm" id="btn-leaderboard">🏆 명예의 전당</button>
+      <button class="btn btn-sm" id="btn-save">💾 저장</button>
+      <button class="btn btn-sm" id="btn-load">📂 불러오기</button>
+      <button class="btn btn-sm btn-danger" id="btn-new">🔄 새 게임</button>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════
+       MAIN LAYOUT  (sidebar + game area)
+       ══════════════════════════════════════════ -->
+  <div id="main-layout">
+
+    <!-- ─────────────── LEFT SIDEBAR ─────────────── -->
+    <aside id="sidebar">
+
+      <!-- Sidebar tab buttons -->
+      <div id="sidebar-tabs">
+        <button class="sidebar-tab active" data-tab="status">📊 현황</button>
+        <button class="sidebar-tab" data-tab="buildings">🏗️ 건물</button>
+        <button class="sidebar-tab" data-tab="guide">📖 가이드</button>
+      </div>
+
+      <!-- ── STATUS PANEL ── -->
+      <div class="sidebar-panel active" id="panel-status">
+
+        <!-- Difficulty Mode Selector -->
+        <div class="sidebar-section">
+          <div class="section-title">⏱️ 도전 모드 (성취 목표)</div>
+          <div id="difficulty-selector">
+            <button class="diff-btn active" data-mode="quick" title="5분 단기 코스: 지식 60점 + 건물 2개">⚡ 빠른 체험 (5분)</button>
+            <button class="diff-btn" data-mode="normal" title="15분 표준 코스: 지식 150점 + 건물 4개">🎯 표준 수업 (15분)</button>
+            <button class="diff-btn" data-mode="master" title="심화 정복 코스: 지식 300점 + 건물 6개">👑 심화 탐험</button>
+          </div>
+          <div id="stage-badge-display">
+            <span class="stage-badge-tag">현재 단계</span>
+            <span id="current-stage-title">🌱 1단계: 시장의 첫걸음</span>
+          </div>
+        </div>
+
+        <!-- Knowledge progress -->
+        <div class="sidebar-section">
+          <div class="section-title">📚 지식 목표 달성도</div>
+          <div class="progress-bar-wrapper">
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="knowledge-bar-fill"></div>
+            </div>
+            <div class="progress-label" id="knowledge-bar-text">0 / 60</div>
+          </div>
+        </div>
+
+        <!-- Stats grid -->
+        <div class="sidebar-section">
+          <div class="section-title">🔢 통계</div>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-label">🗺️ 탐험 타일</div>
+              <div class="stat-value" id="explored-text">1 / 100</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">👥 생존자</div>
+              <div class="stat-value survivor-dots" id="survivor-display"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tile info panel -->
+        <div class="sidebar-section" id="tile-info-panel">
+          <div class="section-title">🔍 타일 정보</div>
+          <div class="tile-info-name">타일을 클릭하세요</div>
+          <div class="tile-info-desc"></div>
+          <div class="tile-info-status"></div>
+        </div>
+
+        <!-- Subject selector -->
+        <div class="sidebar-section">
+          <div class="section-title">📖 학습 단원 (2022 개정 6-2 사회)</div>
+          <div id="subject-selector">
+            <button class="subject-btn active" data-subject="mixed">🌐 전체 단원 통합</button>
+            <button class="subject-btn" data-subject="market_economy">🏪 1. 시장경제와 가계·기업</button>
+            <button class="subject-btn" data-subject="economic_growth">📈 2. 경제성장과 우리 생활</button>
+            <button class="subject-btn" data-subject="world_trade">🚢 3. 국가 간 거래와 무역</button>
+            <button class="subject-btn" data-subject="world_environment">🌿 4. 세계 환경과 지구촌</button>
+          </div>
+        </div>
+
+      </div><!-- /panel-status -->
+
+      <!-- ── BUILDINGS PANEL ── -->
+      <div class="sidebar-panel" id="panel-buildings">
+        <div class="sidebar-section">
+          <div class="section-title">🏗️ 경제 기반 건설 / 업그레이드</div>
+          <!-- Populated dynamically by UIManager._updateBuildingsPanel() -->
+          <div id="buildings-panel"></div>
+        </div>
+      </div>
+
+      <!-- ── GUIDE PANEL ── -->
+      <div class="sidebar-panel" id="panel-guide">
+        <div class="sidebar-section">
+          <div class="section-title">📖 게임 방법</div>
+          <div class="guide-content">
+            <div class="guide-step">
+              <span class="guide-icon">1️⃣</span>
+              <span>반짝이는 타일을 클릭하여 경제·사회 탐험을 시작하세요.</span>
+            </div>
+            <div class="guide-step">
+              <span class="guide-icon">2️⃣</span>
+              <span>6-2 경제 퀴즈(시장경제, 경제성장, 무역)를 풀면 생산 자원을 얻습니다.</span>
+            </div>
+            <div class="guide-step">
+              <span class="guide-icon">3️⃣</span>
+              <span>자원으로 쉘터, 스마트 농장, 수출 공작소, 기술 연구소를 세우세요.</span>
+            </div>
+            <div class="guide-step">
+              <span class="guide-icon">4️⃣</span>
+              <span>지식 500점 달성 + 8개 시설 완공 시 지속 가능한 경제 문명 재건 승리!</span>
+            </div>
+            <hr class="guide-divider">
+            <div class="section-title">🏠 주요 시설 효과</div>
+            <div class="guide-step"><span class="guide-icon">🌾</span><span>친환경 농장: 3턴마다 식량 지속 생산</span></div>
+            <div class="guide-step"><span class="guide-icon">📖</span><span>금융 도서관: 지식 획득 보너스 +50%</span></div>
+            <div class="guide-step"><span class="guide-icon">🏫</span><span>사회경제 학교: 오답 1개 자동 제거 힌트</span></div>
+            <div class="guide-step"><span class="guide-icon">🔬</span><span>기술 연구소: 고난도(⭐3) 도전 해금</span></div>
+            <hr class="guide-divider">
+            <div class="section-title">🗺️ 사회과 탐험 타일</div>
+            <div class="guide-step"><span class="guide-icon">🏪</span><span>시장경제 교역터: 가계와 기업, 합리적 소비와 시장</span></div>
+            <div class="guide-step"><span class="guide-icon">🏭</span><span>산업·경제 개발지: 한강의 기적과 우리나라 경제성장</span></div>
+            <div class="guide-step"><span class="guide-icon">🚢</span><span>글로벌 무역 항만: 국가 간 거래, 수출입과 자유무역</span></div>
+            <div class="guide-step"><span class="guide-icon">🌿</span><span>지속가능 생태 구역: 세계의 기후와 지구촌 환경 문제</span></div>
+            <div class="guide-step"><span class="guide-icon">📚</span><span>경제·지혜 아카데미: 전 단원 종합 퀴즈와 최고 지식</span></div>
+          </div>
+        </div>
+      </div>
+
+    </aside><!-- /sidebar -->
+
+    <!-- ─────────────── GAME AREA ─────────────── -->
+    <section id="game-area">
+
+      <!-- Canvas -->
+      <div id="canvas-wrapper">
+        <canvas id="canvas" width="600" height="600"></canvas>
+      </div>
+
+      <!-- Message Log -->
+      <div id="message-log-wrapper">
+        <div class="section-title">📋 게임 로그</div>
+        <div id="message-log"></div>
+      </div>
+
+    </section><!-- /game-area -->
+
+  </div><!-- /main-layout -->
+
+</div><!-- /app -->
+
+<!-- ══════════════════════════════════════════
+     QUIZ MODAL OVERLAY
+     ══════════════════════════════════════════ -->
+<div id="quiz-modal-overlay">
+  <div id="quiz-modal">
+
+    <!-- Header -->
+    <div id="quiz-modal-header">
+      <div id="quiz-header-left">
+        <span id="quiz-subject-tag" class="subject-tag">📚 과목</span>
+        <span id="quiz-difficulty">⭐</span>
+      </div>
+      <div id="quiz-tile-label">타일 탐험</div>
+    </div>
+
+    <!-- Question -->
+    <div id="quiz-question"></div>
+
+    <!-- Choices -->
+    <div id="quiz-choices"></div>
+
+    <!-- Explanation (shown after answer) -->
+    <div id="quiz-explanation">
+      <div class="explanation-header">
+        <span class="explanation-icon"></span>
+        <span class="explanation-title"></span>
+      </div>
+      <div id="explanation-text"></div>
+      <div id="quiz-reward-info"></div>
+    </div>
+
+    <!-- Action buttons (retry / continue) -->
+    <div id="quiz-action-row"></div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     WELCOME TUTORIAL OVERLAY (첫 화면 쉬운 게임 방법 안내)
+     ══════════════════════════════════════════ -->
+<div id="welcome-tutorial-overlay" class="visible">
+  <div id="welcome-tutorial-modal">
+    <div class="tutorial-header">
+      <span class="tutorial-emoji">🌏</span>
+      <h2>환영합니다! 지식의 땅 경제 탐험대</h2>
+      <p class="tutorial-subtitle">초등 6학년 2학기 사회를 가장 재미있게 배우는 3단계 비법!</p>
+    </div>
+
+    <div class="tutorial-cards">
+      <!-- 1단계 카드 -->
+      <div class="tutorial-card">
+        <div class="card-step-badge">STEP 1</div>
+        <div class="card-icon">✨ 🗺️</div>
+        <h3>반짝이는 타일 클릭!</h3>
+        <p>본부(🏛️) 주변의 <strong class="highlight-teal">빛나는 타일</strong>을 클릭하면 6학년 2학기 사회 퀴즈가 열려요.</p>
+      </div>
+
+      <!-- 2단계 카드 -->
+      <div class="tutorial-card">
+        <div class="card-step-badge">STEP 2</div>
+        <div class="card-icon">💡 🍎</div>
+        <h3>퀴즈 풀고 자원 모으기!</h3>
+        <p>틀려도 벌점 없이 <strong class="highlight-gold">친절한 설명</strong>을 읽고 맞히면 식량, 목재, 지식을 얻어요.</p>
+      </div>
+
+      <!-- 3단계 카드 -->
+      <div class="tutorial-card">
+        <div class="card-step-badge">STEP 3</div>
+        <div class="card-icon">🏗️ 🏆</div>
+        <h3>건물 짓고 단계 돌파!</h3>
+        <p>모은 자원으로 쉘터와 농장을 세우고, <strong class="highlight-teal">단계별 축하 팡파르</strong>를 터뜨려 보세요!</p>
+      </div>
+    </div>
+
+    <div class="tutorial-footer">
+      <div class="tutorial-tip">
+        <span>💡 팁: 쉬는 시간에 5분 만에 끝내려면 좌측에서 <strong>[⚡ 빠른 체험]</strong> 모드를 고르세요!</span>
+      </div>
+      <button class="btn btn-success btn-large" id="btn-tutorial-start">🚀 지금 바로 탐험 시작하기!</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     STAGE CLEAR CELEBRATION OVERLAY (대형 축하 팝업)
+     ══════════════════════════════════════════ -->
+<div id="stage-clear-overlay">
+  <div id="stage-clear-modal">
+    <div class="stage-celebration-particles">✨ 🎊 🏆 🎊 ✨</div>
+    <div id="stage-clear-badge">STAGE COMPLETE!</div>
+    <div id="stage-clear-title">🌟 축하합니다! 1단계를 달성했습니다!</div>
+    <div id="stage-clear-desc">시장과 경제의 기본 원리를 훌륭하게 익혔습니다. 생존자들이 희망을 얻었습니다!</div>
+    <div class="stage-clear-rewards">
+      <div class="stage-reward-box">
+        <span class="reward-box-label">획득 칭호</span>
+        <span class="reward-box-val" id="stage-reward-title">🌱 경제 꿈나무</span>
+      </div>
+      <div class="stage-reward-box">
+        <span class="reward-box-label">보너스 보상</span>
+        <span class="reward-box-val" id="stage-reward-bonus">🍎+20 🪵+20 ⚙️+10</span>
+      </div>
+    </div>
+    <button class="btn btn-success btn-large" id="btn-stage-continue">🚀 다음 단계로 도전하기!</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     WIN SCREEN OVERLAY
+     ══════════════════════════════════════════ -->
+<div id="win-screen-overlay">
+  <div id="win-screen">
+    <div id="win-title">🎉 경제 문명 완전 정복!</div>
+    <div id="win-subtitle">대한민국 6-2 사회 경제 마스터 달성!</div>
+    <div class="win-stats"></div>
+    <button class="btn btn-success btn-large" id="btn-restart">🔄 다시 플레이</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     PAUSE OVERLAY (일시정지 화면)
+     ══════════════════════════════════════════ -->
+<div id="pause-overlay">
+  <div id="pause-modal">
+    <div class="pause-icon">⏸️</div>
+    <h2>게임 일시정지 중</h2>
+    <p>선생님 말씀에 집중하거나 잠시 쉬어가는 시간입니다!</p>
+    <div class="pause-actions">
+      <button class="btn btn-success btn-large" id="btn-pause-resume">▶️ 게임 계속하기</button>
+      <button class="btn btn-primary" id="btn-pause-save">💾 현재 상태 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     STUDENT PROFILE & 4-DIGIT PIN MODAL (학생 개인별 저장/로그인)
+     ══════════════════════════════════════════ -->
+<div id="student-modal-overlay">
+  <div id="student-modal">
+    <div class="modal-header-tag">👤 탐험가 프로필 관리</div>
+    <h2>나만의 기록 보관함</h2>
+    <p class="modal-subtext">이름과 4자리 비밀번호(PIN)를 입력하여 내 점수와 진행 상황을 안전하게 지키세요!</p>
+
+    <div class="student-input-group">
+      <label for="student-name-input">🏷️ 이름 또는 학번/별명</label>
+      <input type="text" id="student-name-input" placeholder="예: 6반 15번 민수" maxlength="15">
+    </div>
+
+    <div class="student-input-group">
+      <label for="student-pin-input">🔑 나만의 4자리 PIN (생일이나 기억하기 쉬운 번호)</label>
+      <input type="password" id="student-pin-input" placeholder="숫자 4자리 (예: 0512)" maxlength="4" pattern="[0-9]*" inputmode="numeric">
+    </div>
+
+    <div class="student-modal-btns">
+      <button class="btn btn-success" id="btn-student-login">🚀 내 기록으로 시작/불러오기</button>
+      <button class="btn btn-primary" id="btn-student-guest">👤 게스트로 계속하기</button>
+      <button class="btn" id="btn-student-close">✖️ 닫기</button>
+    </div>
+
+    <!-- 저장된 탐험가 슬롯 목록 -->
+    <div class="saved-profiles-section">
+      <div class="saved-profiles-title">📂 이 컴퓨터에 저장된 친구들 (클릭하여 선택)</div>
+      <div id="saved-profiles-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     LEADERBOARD OVERLAY (명예의 전당 / 학급 랭킹)
+     ══════════════════════════════════════════ -->
+<div id="leaderboard-overlay">
+  <div id="leaderboard-modal">
+    <div class="leaderboard-header">
+      <span class="leaderboard-trophy">🏆</span>
+      <h2>지식의 땅 명예의 전당</h2>
+      <p>우리 반 최고의 경제 사령관 랭킹입니다!</p>
+    </div>
+    
+    <div class="leaderboard-table-container">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th>순위</th>
+            <th>탐험가</th>
+            <th>최종 점수</th>
+            <th>정답률</th>
+            <th>개척 타일</th>
+            <th>달성 등급</th>
+            <th>달성일</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-body">
+          <!-- Dynamically populated -->
+        </tbody>
+      </table>
+    </div>
+
+    <div class="leaderboard-footer">
+      <button class="btn btn-primary btn-large" id="btn-leaderboard-close">확인 완료</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notification container -->
+<div id="toast-container"></div>
+
+<!-- Scripts -->
+<script src="js/data.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
