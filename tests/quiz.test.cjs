@@ -73,6 +73,68 @@ test('all 60 questions preserve the correct text through all 24 choice permutati
   `);
 });
 
+test('startup asks for a student choice, validates PIN, and resumes only after verified login', () => {
+  const run = createGame();
+  run(`
+    const elements = {
+      'student-name-input': { value: '' },
+      'student-pin-input': { value: '' },
+      'btn-student-close': { style: {}, addEventListener(event, callback) { this.click = callback; } },
+      'btn-student-login': { addEventListener(event, callback) { this.click = callback; } },
+      'btn-student-guest': { addEventListener(event, callback) { this.click = callback; } },
+    };
+    document.getElementById = id => elements[id] || null;
+    document.querySelectorAll = () => [];
+    const visibleClasses = new Set();
+    uiManager.studentOverlay = { classList: {
+      add(value) { visibleClasses.add(value); },
+      remove(value) { visibleClasses.delete(value); },
+    } };
+    uiManager.renderSavedProfilesList = () => {};
+    uiManager.showStudentModal = beforeStart => UIManager.prototype.showStudentModal.call(uiManager, beforeStart);
+    uiManager.hideStudentModal = () => UIManager.prototype.hideStudentModal.call(uiManager);
+    uiManager.completeStudentSetup = showTutorial => UIManager.prototype.completeStudentSetup.call(uiManager, showTutorial);
+    let tutorials = 0;
+    uiManager.showTutorialModal = () => { tutorials++; };
+    GameManager.prototype._bindUIEvents.call(gameManager);
+    tileMap.init();
+    uiManager.showStudentModal(true);
+    if (!visibleClasses.has('visible') || !elements['btn-student-close'].hidden || elements['btn-student-close'].style.display !== 'none') throw Error('startup prompt is dismissible');
+    elements['btn-student-close'].click();
+    if (!visibleClasses.has('visible')) throw Error('startup prompt closed before choice');
+    elements['btn-student-login'].click();
+    if (!uiManager._awaitingStudentChoice || saveSystem.hasSave()) throw Error('empty name accepted');
+    elements['student-name-input'].value = 'startupStudent';
+    for (const invalid of ['', '12', 'abcd', '12345']) {
+      elements['student-pin-input'].value = invalid;
+      elements['btn-student-login'].click();
+      if (!uiManager._awaitingStudentChoice || saveSystem.hasSave()) throw Error('invalid PIN accepted');
+    }
+    elements['student-pin-input'].value = '1234';
+    elements['btn-student-login'].click();
+    if (uiManager._awaitingStudentChoice || visibleClasses.has('visible') || tutorials !== 1) throw Error('registered student could not start tutorial');
+    if (saveSystem.getAllProfiles().startupStudent.pin !== '1234') throw Error('student PIN not saved');
+    gameState.turn = 9;
+    saveSystem.autoSave();
+    uiManager.showStudentModal(true);
+    elements['student-name-input'].value = 'startupStudent';
+    elements['student-pin-input'].value = '9999';
+    gameState.turn = 1;
+    elements['btn-student-login'].click();
+    if (!uiManager._awaitingStudentChoice || gameState.turn !== 1) throw Error('wrong PIN bypassed startup');
+    elements['student-pin-input'].value = '1234';
+    elements['btn-student-login'].click();
+    if (uiManager._awaitingStudentChoice || gameState.turn !== 9 || tutorials !== 1) throw Error('verified login did not resume saved progress');
+    uiManager.showStudentModal(true);
+    elements['btn-student-guest'].click();
+    if (uiManager._awaitingStudentChoice || gameState.studentName !== '게스트' || tutorials !== 2) throw Error('explicit guest selection did not start');
+    uiManager.showStudentModal();
+    if (elements['btn-student-close'].hidden || elements['btn-student-close'].style.display) throw Error('profile management close button remained hidden');
+    elements['btn-student-close'].click();
+    if (visibleClasses.has('visible')) throw Error('profile management could not close');
+  `);
+});
+
 test('automatic saves preserve an unanswered quiz, wrong result, and awarded correct result across reloads', () => {
   const run = createGame();
   run(`

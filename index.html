@@ -319,17 +319,17 @@
 <div id="student-modal-overlay">
   <div id="student-modal">
     <div class="modal-header-tag">👤 탐험가 프로필 관리</div>
-    <h2>나만의 기록 보관함</h2>
-    <p class="modal-subtext">이름과 4자리 비밀번호(PIN)를 입력하여 내 점수와 진행 상황을 안전하게 지키세요!</p>
+    <h2>게임 시작 전, 내 기록 등록하기</h2>
+    <p class="modal-subtext">이름과 숫자 4자리 비밀번호(PIN)를 입력하세요. 진행 상황은 내 이름으로 자동 저장됩니다. 다음에 같은 기기·브라우저에서 이름과 비밀번호를 입력하면 이어갈 수 있어요.</p>
 
     <div class="student-input-group">
       <label for="student-name-input">🏷️ 이름 또는 학번/별명</label>
-      <input type="text" id="student-name-input" placeholder="예: 6반 15번 민수" maxlength="15">
+      <input type="text" id="student-name-input" placeholder="예: 6반 15번 민수" maxlength="15" autocomplete="username">
     </div>
 
     <div class="student-input-group">
       <label for="student-pin-input">🔑 나만의 4자리 PIN (생일이나 기억하기 쉬운 번호)</label>
-      <input type="password" id="student-pin-input" placeholder="숫자 4자리 (예: 0512)" maxlength="4" pattern="[0-9]*" inputmode="numeric">
+      <input type="password" id="student-pin-input" placeholder="숫자 4자리 (예: 0512)" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" autocomplete="off">
     </div>
 
     <div class="student-modal-btns">
@@ -387,6 +387,6 @@
 
 <!-- Scripts -->
 <script src="js/data.js"></script>
-<script src="js/game.js?v=20261012-autosave1"></script>
+<script src="js/game.js?v=20261012-student-start1"></script>
 </body>
 </html>

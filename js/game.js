@@ -1550,8 +1550,14 @@ class UIManager {
   /**
    * Show Student Profile / Login modal.
    */
-  showStudentModal() {
+  showStudentModal(beforeStart = false) {
     if (!this.studentOverlay) return;
+    this._awaitingStudentChoice = beforeStart;
+    const closeButton = document.getElementById('btn-student-close');
+    if (closeButton) {
+      closeButton.hidden = beforeStart;
+      closeButton.style.display = beforeStart ? 'none' : '';
+    }
     const nameInput = document.getElementById('student-name-input');
     const pinInput  = document.getElementById('student-pin-input');
     if (nameInput) nameInput.value = (gameState.studentName !== '게스트') ? gameState.studentName : '';
@@ -1565,7 +1571,15 @@ class UIManager {
    * Hide Student Profile modal.
    */
   hideStudentModal() {
+    if (this._awaitingStudentChoice) return;
     if (this.studentOverlay) this.studentOverlay.classList.remove('visible');
+  }
+
+  /** Finish the startup choice only after registration, verified login, or guest selection. */
+  completeStudentSetup(showTutorial = false) {
+    this._awaitingStudentChoice = false;
+    this.hideStudentModal();
+    if (showTutorial) this.showTutorialModal();
   }
 
   /**
@@ -1987,6 +2001,8 @@ class GameManager {
 
     console.log('[GameManager] Initialization complete.');
     saveSystem.enableAutoSave();
+    uiManager.hideTutorialModal();
+    uiManager.showStudentModal(true);
   }
 
   /**
@@ -2162,10 +2178,11 @@ class GameManager {
     const studentGuestBtn = document.getElementById('btn-student-guest');
     if (studentGuestBtn) {
       studentGuestBtn.addEventListener('click', () => {
+        const beforeStart = uiManager._awaitingStudentChoice;
         gameState.studentName = '게스트';
         gameState.studentPin = '';
         uiManager.updateStudentDisplay();
-        uiManager.hideStudentModal();
+        uiManager.completeStudentSetup(beforeStart);
         uiManager.showToast('👤 게스트 모드로 진행합니다.', 'info');
         saveSystem.autoSave();
       });
@@ -2183,28 +2200,34 @@ class GameManager {
           uiManager.showToast('이름 또는 학번/별명을 입력해 주세요!', 'warning');
           return;
         }
+        if (!/^\d{4}$/.test(pin)) {
+          uiManager.showToast('비밀번호는 숫자 4자리로 입력해 주세요!', 'warning');
+          return;
+        }
 
         const profiles = saveSystem.getAllProfiles();
         if (profiles[name]) {
           // Existing student profile → verify PIN
           const res = saveSystem.loadProfile(name, pin);
           if (res.success) {
+            // Existing profiles without a PIN acquire the PIN entered at startup.
+            if (!profiles[name].pin) {
+              gameState.studentPin = pin;
+              saveSystem.autoSave();
+            }
             uiManager.showToast(res.message, 'success');
-            uiManager.hideStudentModal();
+            uiManager.completeStudentSetup();
           } else {
             uiManager.showToast(res.message, 'error');
           }
         } else {
           // New student profile creation
-          if (pin && pin.length !== 4) {
-            uiManager.showToast('PIN 번호는 숫자 4자리여야 합니다!', 'warning');
-            return;
-          }
+          const beforeStart = uiManager._awaitingStudentChoice;
           gameState.studentName = name;
           gameState.studentPin = pin;
-          saveSystem.save();
+          if (!saveSystem.save()) return;
           uiManager.updateStudentDisplay();
-          uiManager.hideStudentModal();
+          uiManager.completeStudentSetup(beforeStart);
           uiManager.showToast(`🎉 새로운 탐험가 [${name}] 등록 완료!`, 'success');
         }
       });
