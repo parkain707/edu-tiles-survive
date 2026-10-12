@@ -9,6 +9,14 @@ function createGame() {
   const context = vm.createContext({
     console: { log() {}, warn() {}, error() {} },
     performance: { now: () => 0 },
+    document: {
+      visibilityState: 'visible', handlers: {},
+      addEventListener(event, callback) { this.handlers[event] = callback; },
+    },
+    window: {
+      handlers: {},
+      addEventListener(event, callback) { this.handlers[event] = callback; },
+    },
     localStorage: {
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, String(value)),
@@ -23,6 +31,7 @@ function createGame() {
     const uiManager = {
       showQuizModal() {}, showAnswerResult() {}, resetQuizChoices() {}, hideQuizModal() {},
       pulseResource() {}, updateHUD() {}, updateSidebar() {}, showToast() {},
+      hidePauseModal() {}, updateStudentDisplay() {},
     };
     const resourceSystem = new ResourceSystem();
     const quizSystem = new QuizSystem();
@@ -61,6 +70,82 @@ test('all 60 questions preserve the correct text through all 24 choice permutati
     }
     Math.random = random;
     if (JSON.stringify(originals) !== snapshot) throw Error('question bank mutated');
+  `);
+});
+
+test('automatic saves preserve an unanswered quiz, wrong result, and awarded correct result across reloads', () => {
+  const run = createGame();
+  run(`
+    tileMap.init();
+    gameState.studentName = 'autosaveStudent';
+    gameState.studentPin = '5678';
+    const tile = tileMap.getTile(5, 4);
+    tile.type = 'forest';
+    quizSystem.startQuiz(tile);
+    const choices = JSON.stringify(gameState.currentQuiz.question.choices);
+    function reloadSavedGame() {
+      gameState.currentQuiz = null;
+      gameState.pendingTile = null;
+      gameState.resources.food = -1;
+      if (!saveSystem.load()) throw Error('automatic save missing');
+      if (gameState.currentQuiz.tile !== tileMap.getTile(5, 4) || gameState.pendingTile !== gameState.currentQuiz.tile) throw Error('restored quiz lost map reference');
+      if (JSON.stringify(gameState.currentQuiz.question.choices) !== choices) throw Error('active quiz order changed');
+    }
+    reloadSavedGame();
+    if (gameState.currentQuiz.isCorrect !== null || gameState.resources.food < 0) throw Error('unanswered quiz lost');
+    const wrong = (gameState.currentQuiz.question.answerIndex + 1) % 4;
+    quizSystem.submitAnswer(wrong);
+    reloadSavedGame();
+    if (gameState.currentQuiz.isCorrect !== false || gameState.currentQuiz.lastChoice !== wrong || gameState.score.incorrect !== 1) throw Error('wrong result lost');
+    quizSystem.retryQuestion();
+    reloadSavedGame();
+    if (gameState.currentQuiz.isCorrect !== null || gameState.currentQuiz.lastChoice !== null) throw Error('retry not saved');
+    quizSystem.submitAnswer(gameState.currentQuiz.question.answerIndex);
+    const rewarded = JSON.stringify(gameState.resources);
+    reloadSavedGame();
+    if (gameState.currentQuiz.isCorrect !== true || JSON.stringify(gameState.resources) !== rewarded || gameState.score.correct !== 1) throw Error('correct result lost or rewards repeated');
+    quizSystem.submitAnswer(gameState.currentQuiz.question.answerIndex);
+    if (gameState.score.totalAnswered !== 2 || JSON.stringify(gameState.resources) !== rewarded) throw Error('restored answer was rewarded again');
+    quizSystem.confirmExploration();
+    const snapshot = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (snapshot.gameState.currentQuiz !== null || snapshot.gameState.exploredCount !== 2 || !snapshot.tiles.find(t => t.x === 5 && t.y === 4).explored) throw Error('completed exploration not automatically saved');
+    const profile = saveSystem.getAllProfiles().autosaveStudent;
+    if (profile.pin !== '5678' || profile.saveData.gameState.exploredCount !== 2) throw Error('student profile not automatically saved');
+  `);
+});
+
+test('hidden and pagehide save synchronously without overwriting untouched startup or showing notifications', () => {
+  const run = createGame();
+  run(`
+    let notifications = 0;
+    uiManager.showToast = () => { notifications++; };
+    const previous = JSON.stringify({ gameState: { turn: 99 }, tiles: [] });
+    localStorage.setItem(SAVE_KEY, previous);
+    saveSystem.enableAutoSave();
+    const hiddenHandler = document.handlers.visibilitychange;
+    const pagehideHandler = window.handlers.pagehide;
+    saveSystem.enableAutoSave();
+    if (hiddenHandler !== document.handlers.visibilitychange || pagehideHandler !== window.handlers.pagehide) throw Error('lifecycle listeners bound twice');
+    document.visibilityState = 'hidden';
+    hiddenHandler();
+    pagehideHandler();
+    if (localStorage.getItem(SAVE_KEY) !== previous) throw Error('untouched startup replaced prior session');
+    gameState.turn = 7;
+    gameState.resources.wood = 123;
+    gameState.isPaused = true;
+    saveSystem.autoSave();
+    let snapshot = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (snapshot.gameState.turn !== 7 || snapshot.gameState.resources.wood !== 123 || snapshot.gameState.isPaused) throw Error('automatic save did not capture resumable state');
+    gameState.resources.wood = 124;
+    hiddenHandler();
+    snapshot = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (snapshot.gameState.resources.wood !== 124) throw Error('hidden state was not flushed');
+    gameState.resources.wood = 125;
+    pagehideHandler();
+    if (JSON.parse(localStorage.getItem(SAVE_KEY)).gameState.resources.wood !== 125) throw Error('pagehide not flushed');
+    if (notifications !== 0) throw Error('automatic saves spam notifications');
+    localStorage.setItem = () => { throw Error('storage unavailable'); };
+    if (saveSystem.autoSave() !== false) throw Error('failed storage write reported success');
   `);
 });
 

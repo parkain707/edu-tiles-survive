@@ -110,7 +110,6 @@ const RECORDS_EPOCH  = '20261012_reset1';
 const SAVE_KEY       = `edutiles_save_${RECORDS_EPOCH}`;
 const PROFILES_KEY   = `edutiles_profiles_${RECORDS_EPOCH}`; // Student profile slots
 const LEADERBOARD_KEY = `edutiles_leaderboard_${RECORDS_EPOCH}`;
-const AUTO_SAVE_TURNS = 5;      // Auto-save every N turns
 
 // Tile type weights for random generation (must sum to 100)
 const TILE_WEIGHTS = [
@@ -478,6 +477,7 @@ class QuizSystem {
     gameState.isQuizOpen = true;
 
     uiManager.showQuizModal(question, tile);
+    saveSystem.autoSave();
   }
 
   /**
@@ -512,6 +512,7 @@ class QuizSystem {
       uiManager.showAnswerResult(false, question, {});
       gameManager.addMessage(`❌ 오답. 설명을 읽고 다시 도전하세요!`, 'error');
     }
+    saveSystem.autoSave();
   }
 
   /**
@@ -535,6 +536,7 @@ class QuizSystem {
     gameManager.nextTurn();
     gameManager.checkWinCondition();
     uiManager.updateSidebar();
+    saveSystem.autoSave();
   }
 
   /**
@@ -547,6 +549,7 @@ class QuizSystem {
     quiz.lastChoice = null;
     const { question, tile } = quiz;
     uiManager.resetQuizChoices(question, tile);
+    saveSystem.autoSave();
   }
 }
 
@@ -616,6 +619,7 @@ class BuildingSystem {
 
     uiManager.updateSidebar();
     gameManager.checkWinCondition();
+    saveSystem.autoSave();
     return true;
   }
 
@@ -1338,6 +1342,7 @@ class UIManager {
       gameState.currentQuiz = null;
       gameState.pendingTile = null;
       gameManager.addMessage('🚫 탐험 포기. 자원 소모 없음.', 'warning');
+      saveSystem.autoSave();
     }
   }
 
@@ -1531,6 +1536,7 @@ class UIManager {
   showPauseModal() {
     gameState.isPaused = true;
     if (this.pauseOverlay) this.pauseOverlay.classList.add('visible');
+    saveSystem.flushAutoSave();
   }
 
   /**
@@ -1672,6 +1678,27 @@ class UIManager {
    ============================================================ */
 
 class SaveSystem {
+  /** Save each completed user action synchronously, without manual-save notifications. */
+  autoSave() {
+    this._autoSaveReady = true;
+    return this.save({ silent: true });
+  }
+
+  /** Do not overwrite a previous session with the untouched startup screen. */
+  flushAutoSave() {
+    if (!this._autoSaveReady) return false;
+    return this.save({ silent: true });
+  }
+
+  enableAutoSave() {
+    if (this._autoSaveBound) return;
+    this._autoSaveBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this.flushAutoSave();
+    });
+    window.addEventListener('pagehide', () => this.flushAutoSave());
+  }
+
   /**
    * Remove records from before the teacher's reset on each browser's next visit.
    * Current-epoch records and other games' storage are preserved.
@@ -1690,16 +1717,16 @@ class SaveSystem {
    * Serialize and save gameState + tileMap to localStorage.
    * If a student profile is active, also saves into that student's profile slot.
    */
-  save() {
+  save({ silent = false } = {}) {
     try {
       const saveData = {
-        version: '1.0',
+        version: '1.1',
         savedAt: new Date().toISOString(),
         gameState: {
           ...gameState,
-          currentQuiz: null, // Don't persist open quiz state
+          currentQuiz: gameState.currentQuiz,
           pendingTile: null,
-          isQuizOpen: false,
+          isQuizOpen: !!gameState.currentQuiz,
           isPaused: false,
         },
         tiles: tileMap.grid,
@@ -1713,12 +1740,15 @@ class SaveSystem {
         this.saveProfile(gameState.studentName, gameState.studentPin, saveData);
       }
 
-      uiManager.showToast(`💾 [${gameState.studentName}] 저장 완료!`, 'success', 2000);
-      gameManager.addMessage(`💾 ${gameState.studentName} 학생의 기록이 저장되었습니다.`, 'system');
+      this._autoSaveReady = true;
+      if (!silent) {
+        uiManager.showToast(`💾 [${gameState.studentName}] 저장 완료!`, 'success', 2000);
+        gameManager.addMessage(`💾 ${gameState.studentName} 학생의 기록이 저장되었습니다.`, 'system');
+      }
       return true;
     } catch (e) {
       console.error('[SaveSystem] Save failed:', e);
-      uiManager.showToast('저장 실패: ' + e.message, 'error');
+      if (!silent) uiManager.showToast('저장 실패: ' + e.message, 'error');
       return false;
     }
   }
@@ -1750,12 +1780,37 @@ class SaveSystem {
   applySaveData(saveData) {
     if (!saveData.gameState || !saveData.tiles) throw new Error('손상된 저장 데이터');
 
+    uiManager.hideQuizModal();
+    uiManager.hidePauseModal();
+
     // Restore game state
     Object.assign(gameState, saveData.gameState);
     gameState.isPaused = false;
 
     // Restore tile map
     tileMap.loadFrom(saveData.tiles);
+
+    // Reconnect the saved quiz to the restored map; never grant its rewards again.
+    const quiz = gameState.currentQuiz;
+    const quizTile = quiz?.tile && tileMap.getTile(quiz.tile.x, quiz.tile.y);
+    if (quiz && quizTile && !quizTile.explored) {
+      quiz.tile = quizTile;
+      gameState.pendingTile = quizTile;
+      gameState.isQuizOpen = true;
+      uiManager.showQuizModal(quiz.question, quizTile);
+      if (quiz.isCorrect !== null) {
+        const tileData = GAME_DATA.tiles[quizTile.type] || {};
+        const rewards = quiz.isCorrect
+          ? { ...(tileData.rewards || {}), ...(quiz.question.rewards || {}) }
+          : {};
+        uiManager.showAnswerResult(quiz.isCorrect, quiz.question, rewards);
+      }
+    } else {
+      gameState.currentQuiz = null;
+      gameState.pendingTile = null;
+      gameState.isQuizOpen = false;
+    }
+    this._autoSaveReady = true;
 
     // Refresh UI
     uiManager.updateStudentDisplay();
@@ -1931,6 +1986,7 @@ class GameManager {
     }
 
     console.log('[GameManager] Initialization complete.');
+    saveSystem.enableAutoSave();
   }
 
   /**
@@ -2046,6 +2102,7 @@ class GameManager {
         btn.classList.add('active');
         gameState.currentSubject = btn.dataset.subject;
         this.addMessage(`📚 학습 주제 변경: ${btn.textContent}`, 'info');
+        saveSystem.autoSave();
       });
     });
 
@@ -2110,6 +2167,7 @@ class GameManager {
         uiManager.updateStudentDisplay();
         uiManager.hideStudentModal();
         uiManager.showToast('👤 게스트 모드로 진행합니다.', 'info');
+        saveSystem.autoSave();
       });
     }
 
@@ -2177,6 +2235,7 @@ class GameManager {
 
     this.addMessage(`⏱️ 난이도 모드 변경: ${config.name} (목표: 지식 ${config.targetKnowledge}점, 시설 ${config.targetBuildings}개)`, 'success');
     uiManager.showToast(`🎯 모드 전환: ${config.name}`, 'success');
+    saveSystem.autoSave();
   }
 
   /**
@@ -2229,11 +2288,6 @@ class GameManager {
   nextTurn() {
     gameState.turn++;
     resourceSystem.processTurnEffects();
-
-    // Auto-save every N turns
-    if (gameState.turn % AUTO_SAVE_TURNS === 0) {
-      saveSystem.save();
-    }
 
     this.checkStageProgression();
     uiManager.updateHUD();
@@ -2377,6 +2431,7 @@ class GameManager {
 
     this.addMessage('🌍 새 게임 시작! 지식의 땅을 정복하세요!', 'success');
     this.addMessage('💡 본부(HQ)에서 시작하여 주변 타일을 탐험하세요.', 'system');
+    saveSystem.autoSave();
 
     console.log('[GameManager] New game started.');
   }
