@@ -437,7 +437,22 @@ class QuizSystem {
       for (const q of Object.values(GAME_DATA.questions)) pool.push(...q);
     }
 
-    return randomFrom(pool) || null;
+    const question = randomFrom(pool);
+    if (!question) return null;
+
+    // Shuffle a copy and track the original indices so the answer follows its choice.
+    const order = question.choices.map((_, index) => index);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    const answerIndex = order.indexOf(question.answerIndex);
+    return {
+      ...question,
+      choices: order.map(index => question.choices[index]),
+      answer: answerIndex,
+      answerIndex,
+    };
   }
 
   /**
@@ -456,7 +471,7 @@ class QuizSystem {
       return;
     }
 
-    gameState.currentQuiz = { question, tile, attempts: 0 };
+    gameState.currentQuiz = { question, tile, attempts: 0, isCorrect: null, lastChoice: null };
     gameState.pendingTile = tile;
     gameState.isQuizOpen = true;
 
@@ -468,8 +483,13 @@ class QuizSystem {
    * @param {number} choiceIndex  0-3
    */
   submitAnswer(choiceIndex) {
-    const { question, tile } = gameState.currentQuiz;
+    const quiz = gameState.currentQuiz;
+    if (!gameState.isQuizOpen || !quiz || quiz.isCorrect !== null) return;
+    const { question, tile } = quiz;
+    if (!Number.isInteger(choiceIndex) || choiceIndex < 0 || choiceIndex >= question.choices.length) return;
     const isCorrect = (choiceIndex === question.answerIndex);
+    quiz.lastChoice = choiceIndex;
+    quiz.isCorrect = isCorrect;
 
     gameState.score.totalAnswered++;
     gameState.currentQuiz.attempts++;
@@ -497,6 +517,7 @@ class QuizSystem {
    * Finalizes tile exploration.
    */
   confirmExploration() {
+    if (gameState.currentQuiz?.isCorrect !== true) return;
     const tile = gameState.pendingTile;
     if (!tile) return;
 
@@ -518,7 +539,11 @@ class QuizSystem {
    * Called when player retries after a wrong answer.
    */
   retryQuestion() {
-    const { question, tile } = gameState.currentQuiz;
+    const quiz = gameState.currentQuiz;
+    if (!quiz || quiz.isCorrect !== false) return;
+    quiz.isCorrect = null;
+    quiz.lastChoice = null;
+    const { question, tile } = quiz;
     uiManager.resetQuizChoices(question, tile);
   }
 }
@@ -693,7 +718,7 @@ class Renderer {
    * Main render function - draws entire tile map.
    * @param {number} [timestamp]
    */
-  render(timestamp = 0) {
+  render(timestamp = performance.now()) {
     const ctx = this.ctx;
     const { canvas } = this;
 
@@ -1203,6 +1228,7 @@ class UIManager {
     if (wrongIndices.length === 0) return;
     const toEliminate = randomFrom(wrongIndices);
     buttons[toEliminate].classList.add('eliminated');
+    buttons[toEliminate].disabled = true;
     const hintEl = document.createElement('div');
     hintEl.className = 'text-xs text-teal mt-sm';
     hintEl.textContent = '🏫 학교 효과: 오답 1개 제거됨';
@@ -1219,17 +1245,11 @@ class UIManager {
     // Disable all choice buttons
     const buttons = this.quizChoices.querySelectorAll('.quiz-choice');
     buttons.forEach((btn, idx) => {
+      btn.disabled = true;
       btn.classList.add('disabled');
       if (idx === question.answerIndex) btn.classList.add('correct');
       else if (btn.dataset.index == gameState.currentQuiz?.lastChoice) btn.classList.add('wrong');
     });
-
-    // Highlight chosen answer
-    if (this.quizChoices) {
-      const chosen = this.quizChoices.querySelector(`[data-index="${
-        isCorrect ? question.answerIndex : gameState.score.totalAnswered - 1
-      }"]`);
-    }
 
     // Show explanation panel
     if (this.quizExplain) {
