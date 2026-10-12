@@ -105,9 +105,11 @@ const TILE_SIZE      = 60;      // pixels per tile
 const CANVAS_SIZE    = 600;     // 600x600px canvas
 const HQ_X           = 4;       // HQ grid position X
 const HQ_Y           = 4;       // HQ grid position Y
-const SAVE_KEY       = 'edutiles_save';
-const PROFILES_KEY   = 'edutiles_profiles';   // Map of { [studentName]: { pin, savedAt, data } }
-const LEADERBOARD_KEY = 'edutiles_leaderboard'; // Array of score records
+// Teacher-requested reset: isolate new records from any still-open old game tabs.
+const RECORDS_EPOCH  = '20261012_reset1';
+const SAVE_KEY       = `edutiles_save_${RECORDS_EPOCH}`;
+const PROFILES_KEY   = `edutiles_profiles_${RECORDS_EPOCH}`; // Student profile slots
+const LEADERBOARD_KEY = `edutiles_leaderboard_${RECORDS_EPOCH}`;
 const AUTO_SAVE_TURNS = 5;      // Auto-save every N turns
 
 // Tile type weights for random generation (must sum to 100)
@@ -1671,6 +1673,20 @@ class UIManager {
 
 class SaveSystem {
   /**
+   * Remove records from before the teacher's reset on each browser's next visit.
+   * Current-epoch records and other games' storage are preserved.
+   */
+  clearPreviousRecords() {
+    try {
+      for (const key of ['edutiles_save', 'edutiles_profiles', 'edutiles_leaderboard']) {
+        localStorage.removeItem(key);
+      }
+    } catch (e) {
+      console.warn('[SaveSystem] Previous records could not be removed:', e);
+    }
+  }
+
+  /**
    * Serialize and save gameState + tileMap to localStorage.
    * If a student profile is active, also saves into that student's profile slot.
    */
@@ -1876,6 +1892,9 @@ class GameManager {
     this._initialized = true;
 
     console.log('[GameManager] Initializing EduTiles: 지식의 땅');
+
+    // Clear old student records before checking for saved games or profiles.
+    saveSystem.clearPreviousRecords();
 
     // Initialize subsystems
     tileMap.init();

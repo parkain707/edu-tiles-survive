@@ -5,7 +5,16 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 function createGame() {
-  const context = vm.createContext({ console: { log() {} }, performance: { now: () => 0 } });
+  const storage = new Map();
+  const context = vm.createContext({
+    console: { log() {}, warn() {}, error() {} },
+    performance: { now: () => 0 },
+    localStorage: {
+      getItem: key => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, String(value)),
+      removeItem: key => storage.delete(key),
+    },
+  });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/data.js'), 'utf8'), context);
   const source = fs.readFileSync(path.join(__dirname, '../js/game.js'), 'utf8');
   // Load real engine classes without booting the canvas or browser UI.
@@ -13,10 +22,11 @@ function createGame() {
     const tileMap = new TileMap();
     const uiManager = {
       showQuizModal() {}, showAnswerResult() {}, resetQuizChoices() {}, hideQuizModal() {},
-      pulseResource() {}, updateHUD() {}, updateSidebar() {},
+      pulseResource() {}, updateHUD() {}, updateSidebar() {}, showToast() {},
     };
     const resourceSystem = new ResourceSystem();
     const quizSystem = new QuizSystem();
+    const saveSystem = new SaveSystem();
     const buildingSystem = { isBuilt: () => false };
     const renderer = { render() {}, triggerRevealEffect() {} };
     const gameManager = { addMessage() {}, nextTurn() {}, checkWinCondition() {} };
@@ -51,6 +61,42 @@ test('all 60 questions preserve the correct text through all 24 choice permutati
     }
     Math.random = random;
     if (JSON.stringify(originals) !== snapshot) throw Error('question bank mutated');
+  `);
+});
+
+test('teacher reset removes all legacy student records and preserves new records across visits', () => {
+  const run = createGame();
+  run(`
+    localStorage.setItem('edutiles_save', JSON.stringify({ gameState: { turn: 99 } }));
+    localStorage.setItem('edutiles_profiles', JSON.stringify({ legacyStudent: { pin: '1234' } }));
+    localStorage.setItem('edutiles_leaderboard', JSON.stringify([{ finalScore: 999 }]));
+    localStorage.setItem('other_game_save', 'untouched');
+    if (saveSystem.hasSave() || Object.keys(saveSystem.getAllProfiles()).length || saveSystem.getLeaderboard().length) {
+      throw Error('legacy records visible before cleanup');
+    }
+    saveSystem.clearPreviousRecords();
+    for (const key of ['edutiles_save', 'edutiles_profiles', 'edutiles_leaderboard']) {
+      if (localStorage.getItem(key) !== null) throw Error('legacy records were not deleted');
+    }
+    gameState.studentName = 'newStudent';
+    gameState.studentPin = '5678';
+    saveSystem.save();
+    saveSystem.recordScore({ studentName: 'newStudent', finalScore: 10 });
+    const newSave = localStorage.getItem(SAVE_KEY);
+    const newProfiles = localStorage.getItem(PROFILES_KEY);
+    const newLeaderboard = localStorage.getItem(LEADERBOARD_KEY);
+    // A tab running the previous release must not restore old records into the new game.
+    localStorage.setItem('edutiles_save', 'old tab saved again');
+    localStorage.setItem('edutiles_profiles', 'old profiles');
+    localStorage.setItem('edutiles_leaderboard', 'old leaderboard');
+    saveSystem.clearPreviousRecords();
+    if (!saveSystem.hasSave() || !saveSystem.getAllProfiles().newStudent || saveSystem.getLeaderboard().length !== 1) {
+      throw Error('new student records lost on next visit');
+    }
+    if (localStorage.getItem(SAVE_KEY) !== newSave || localStorage.getItem(PROFILES_KEY) !== newProfiles || localStorage.getItem(LEADERBOARD_KEY) !== newLeaderboard) {
+      throw Error('current records changed');
+    }
+    if (localStorage.getItem('other_game_save') !== 'untouched') throw Error('unrelated storage changed');
   `);
 });
 
