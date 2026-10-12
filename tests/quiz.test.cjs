@@ -73,6 +73,73 @@ test('all 60 questions preserve the correct text through all 24 choice permutati
   `);
 });
 
+test('one retry only, second failure offers a different question, and reload cannot reset the limit', () => {
+  const run = createGame();
+  run(`
+    tileMap.init();
+    Math.random = () => 0;
+    const tile = tileMap.getTile(5, 4);
+    tile.type = 'forest';
+    const startingResources = JSON.stringify(gameState.resources);
+    const buttons = [];
+    const ui = Object.create(UIManager.prototype);
+    ui.quizChoices = { querySelectorAll: () => [] };
+    ui.quizActionRow = {
+      set innerHTML(value) { buttons.length = 0; },
+      appendChild(button) { buttons.push(button); },
+    };
+    document.createElement = () => ({ addEventListener(event, callback) { this.click = callback; } });
+    uiManager.showAnswerResult = (...args) => ui.showAnswerResult(...args);
+    quizSystem.startQuiz(tile);
+    const firstId = gameState.currentQuiz.question.id;
+    const wrong = (gameState.currentQuiz.question.answerIndex + 1) % 4;
+    quizSystem.submitAnswer(wrong);
+    if (buttons[0].textContent !== '🔄 다시 도전 (마지막 기회)') throw Error('first error did not offer exactly one retry');
+    quizSystem.nextQuestion();
+    if (gameState.currentQuiz.question.id !== firstId) throw Error('next question allowed before retry exhausted');
+    buttons[0].click();
+    if (gameState.currentQuiz.attempts !== 1 || gameState.currentQuiz.isCorrect !== null) throw Error('retry consumed or reset attempts');
+    saveSystem.load();
+    if (gameState.currentQuiz.attempts !== 1) throw Error('reload reset the retry budget');
+    quizSystem.submitAnswer(wrong);
+    if (gameState.currentQuiz.attempts !== 2 || buttons[0].textContent !== '다음 문제 →') throw Error('second error did not offer next question');
+    const resourcesAfterFailures = JSON.stringify(gameState.resources);
+    if (resourcesAfterFailures !== startingResources || gameState.exploredCount !== 1) throw Error('failed question awarded resources or territory');
+    quizSystem.retryQuestion();
+    quizSystem.submitAnswer(gameState.currentQuiz.question.answerIndex);
+    if (gameState.currentQuiz.isCorrect !== false || gameState.score.totalAnswered !== 2) throw Error('third answer accepted');
+    saveSystem.load();
+    if (gameState.currentQuiz.attempts !== 2 || buttons[0].textContent !== '다음 문제 →') throw Error('reload reopened retry after second failure');
+    buttons[0].click();
+    if (gameState.currentQuiz.question.id === firstId || gameState.currentQuiz.attempts !== 0 || gameState.currentQuiz.isCorrect !== null) throw Error('next question was not fresh and different');
+    if (gameState.currentQuiz.tile !== tileMap.getTile(5, 4) || JSON.stringify(gameState.resources) !== resourcesAfterFailures || gameState.score.totalAnswered !== 2) throw Error('next question changed tile or awarded progress');
+    const snapshot = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (snapshot.gameState.currentQuiz.question.id !== gameState.currentQuiz.question.id || snapshot.gameState.currentQuiz.attempts !== 0) throw Error('next question not saved');
+    quizSystem.submitAnswer(gameState.currentQuiz.question.answerIndex);
+    quizSystem.confirmExploration();
+    if (gameState.score.correct !== 1 || gameState.score.incorrect !== 2 || gameState.exploredCount !== 2) throw Error('new question success did not explore exactly once');
+  `);
+});
+
+test('legacy exhausted retries resume with next-question controls and empty pools never award territory', () => {
+  const run = createGame();
+  run(`
+    tileMap.init();
+    quizSystem.startQuiz(tileMap.getTile(5, 4));
+    gameState.currentQuiz.attempts = 3;
+    gameState.currentQuiz.isCorrect = null;
+    saveSystem.save({ silent: true });
+    saveSystem.load();
+    if (gameState.currentQuiz.isCorrect !== false) throw Error('legacy exhausted quiz left unanswered and stuck');
+    const question = gameState.currentQuiz.question;
+    GAME_DATA.questions = { only: [question] };
+    const resources = JSON.stringify(gameState.resources);
+    uiManager.hideQuizModal = cancelled => UIManager.prototype.hideQuizModal.call(uiManager, cancelled);
+    quizSystem.nextQuestion();
+    if (gameState.currentQuiz !== null || gameState.isQuizOpen || gameState.exploredCount !== 1 || JSON.stringify(gameState.resources) !== resources) throw Error('empty next-question pool awarded progress');
+  `);
+});
+
 test('startup asks for a student choice, validates PIN, and resumes only after verified login', () => {
   const run = createGame();
   run(`
@@ -128,6 +195,12 @@ test('startup asks for a student choice, validates PIN, and resumes only after v
     uiManager.showStudentModal(true);
     elements['btn-student-guest'].click();
     if (uiManager._awaitingStudentChoice || gameState.studentName !== '게스트' || tutorials !== 2) throw Error('explicit guest selection did not start');
+    gameState.turn = 12;
+    saveSystem.autoSave();
+    gameState.turn = 1;
+    uiManager.showStudentModal(true);
+    elements['btn-student-guest'].click();
+    if (gameState.turn !== 12 || tutorials !== 2) throw Error('returning guest lost saved progress during startup');
     uiManager.showStudentModal();
     if (elements['btn-student-close'].hidden || elements['btn-student-close'].style.display) throw Error('profile management close button remained hidden');
     elements['btn-student-close'].click();

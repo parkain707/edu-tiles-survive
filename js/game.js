@@ -110,6 +110,7 @@ const RECORDS_EPOCH  = '20261012_reset1';
 const SAVE_KEY       = `edutiles_save_${RECORDS_EPOCH}`;
 const PROFILES_KEY   = `edutiles_profiles_${RECORDS_EPOCH}`; // Student profile slots
 const LEADERBOARD_KEY = `edutiles_leaderboard_${RECORDS_EPOCH}`;
+const MAX_QUIZ_ATTEMPTS = 2; // Initial answer plus one retry per question.
 
 // Tile type weights for random generation (must sum to 100)
 const TILE_WEIGHTS = [
@@ -412,7 +413,7 @@ class QuizSystem {
    * @param {string} tileType  - tile type key (may influence subject)
    * @returns {Object|null} Question object from GAME_DATA.questions
    */
-  getQuestion(tileType) {
+  getQuestion(tileType, excludedQuestionId = null) {
     const subject = gameState.currentSubject;
     const tileData = GAME_DATA.tiles[tileType] || {};
     const preferredSubject = tileData.subject || subject;
@@ -432,10 +433,16 @@ class QuizSystem {
     if (!buildingSystem.isBuilt('lab')) {
       pool = pool.filter(q => (q.difficulty || 1) <= 2);
     }
+    if (excludedQuestionId !== null) {
+      pool = pool.filter(q => q.id !== excludedQuestionId);
+    }
 
     if (pool.length === 0) {
       // Fallback: use all questions
       for (const q of Object.values(GAME_DATA.questions)) pool.push(...q);
+      if (excludedQuestionId !== null) {
+        pool = pool.filter(q => q.id !== excludedQuestionId);
+      }
     }
 
     const question = randomFrom(pool);
@@ -472,6 +479,11 @@ class QuizSystem {
       return;
     }
 
+    this._openQuestion(question, tile);
+  }
+
+  /** Open a fresh question, with exactly one retry available. */
+  _openQuestion(question, tile) {
     gameState.currentQuiz = { question, tile, attempts: 0, isCorrect: null, lastChoice: null };
     gameState.pendingTile = tile;
     gameState.isQuizOpen = true;
@@ -486,7 +498,7 @@ class QuizSystem {
    */
   submitAnswer(choiceIndex) {
     const quiz = gameState.currentQuiz;
-    if (!gameState.isQuizOpen || !quiz || quiz.isCorrect !== null) return;
+    if (!gameState.isQuizOpen || !quiz || quiz.isCorrect !== null || quiz.attempts >= MAX_QUIZ_ATTEMPTS) return;
     const { question, tile } = quiz;
     if (!Number.isInteger(choiceIndex) || choiceIndex < 0 || choiceIndex >= question.choices.length) return;
     const isCorrect = (choiceIndex === question.answerIndex);
@@ -510,7 +522,9 @@ class QuizSystem {
     } else {
       gameState.score.incorrect++;
       uiManager.showAnswerResult(false, question, {});
-      gameManager.addMessage(`❌ 오답. 설명을 읽고 다시 도전하세요!`, 'error');
+      gameManager.addMessage(quiz.attempts < MAX_QUIZ_ATTEMPTS
+        ? '❌ 오답. 설명을 읽고 한 번 더 도전하세요!'
+        : '❌ 재도전도 오답입니다. 보상 없이 다음 문제로 진행하세요.', 'error');
     }
     saveSystem.autoSave();
   }
@@ -544,12 +558,24 @@ class QuizSystem {
    */
   retryQuestion() {
     const quiz = gameState.currentQuiz;
-    if (!quiz || quiz.isCorrect !== false) return;
+    if (!quiz || quiz.isCorrect !== false || quiz.attempts >= MAX_QUIZ_ATTEMPTS) return;
     quiz.isCorrect = null;
     quiz.lastChoice = null;
     const { question, tile } = quiz;
     uiManager.resetQuizChoices(question, tile);
     saveSystem.autoSave();
+  }
+
+  /** After two wrong answers, offer a different question on the same unexplored tile. */
+  nextQuestion() {
+    const quiz = gameState.currentQuiz;
+    if (!gameState.isQuizOpen || !quiz || quiz.isCorrect !== false || quiz.attempts < MAX_QUIZ_ATTEMPTS) return;
+    const question = this.getQuestion(quiz.tile.type, quiz.question.id);
+    if (!question) {
+      uiManager.hideQuizModal(true);
+      return;
+    }
+    this._openQuestion(question, quiz.tile);
   }
 }
 
@@ -1248,6 +1274,7 @@ class UIManager {
    * @param {Object} rewards
    */
   showAnswerResult(isCorrect, question, rewards) {
+    const exhausted = !isCorrect && gameState.currentQuiz?.attempts >= MAX_QUIZ_ATTEMPTS;
     // Disable all choice buttons
     const buttons = this.quizChoices.querySelectorAll('.quiz-choice');
     buttons.forEach((btn, idx) => {
@@ -1268,7 +1295,9 @@ class UIManager {
       }
       if (iconEl) iconEl.textContent = isCorrect ? '✅' : '❌';
       const headerText = header?.querySelector('.explanation-title');
-      if (headerText) headerText.textContent = isCorrect ? '정답입니다!' : '오답입니다.';
+      if (headerText) headerText.textContent = isCorrect ? '정답입니다!'
+        : exhausted ? '재도전 기회를 사용했어요. 다음 문제에 도전하세요!'
+        : '오답입니다. 한 번 더 도전할 수 있어요!';
 
       if (textEl) textEl.textContent = question.explanation || '설명이 없습니다.';
 
@@ -1302,11 +1331,12 @@ class UIManager {
         continueBtn.addEventListener('click', () => quizSystem.confirmExploration());
         this.quizActionRow.appendChild(continueBtn);
       } else {
-        const retryBtn = document.createElement('button');
-        retryBtn.className = 'btn btn-primary';
-        retryBtn.textContent = '🔄 다시 도전';
-        retryBtn.addEventListener('click', () => quizSystem.retryQuestion());
-        this.quizActionRow.appendChild(retryBtn);
+        const actionBtn = document.createElement('button');
+        actionBtn.className = 'btn btn-primary';
+        actionBtn.textContent = exhausted ? '다음 문제 →' : '🔄 다시 도전 (마지막 기회)';
+        actionBtn.addEventListener('click', () => exhausted
+          ? quizSystem.nextQuestion() : quizSystem.retryQuestion());
+        this.quizActionRow.appendChild(actionBtn);
 
         const skipBtn = document.createElement('button');
         skipBtn.className = 'btn btn-danger';
@@ -1808,6 +1838,8 @@ class SaveSystem {
     const quiz = gameState.currentQuiz;
     const quizTile = quiz?.tile && tileMap.getTile(quiz.tile.x, quiz.tile.y);
     if (quiz && quizTile && !quizTile.explored) {
+      // Older saves may be waiting for a third attempt; apply the new limit on resume.
+      if (quiz.attempts >= MAX_QUIZ_ATTEMPTS && quiz.isCorrect !== true) quiz.isCorrect = false;
       quiz.tile = quizTile;
       gameState.pendingTile = quizTile;
       gameState.isQuizOpen = true;
@@ -2179,10 +2211,19 @@ class GameManager {
     if (studentGuestBtn) {
       studentGuestBtn.addEventListener('click', () => {
         const beforeStart = uiManager._awaitingStudentChoice;
+        let resumedGuest = false;
+        if (beforeStart) {
+          try {
+            const saved = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+            if (saved?.gameState?.studentName === '게스트') resumedGuest = saveSystem.load();
+          } catch (e) {
+            console.warn('[SaveSystem] Guest resume failed:', e);
+          }
+        }
         gameState.studentName = '게스트';
         gameState.studentPin = '';
         uiManager.updateStudentDisplay();
-        uiManager.completeStudentSetup(beforeStart);
+        uiManager.completeStudentSetup(beforeStart && !resumedGuest);
         uiManager.showToast('👤 게스트 모드로 진행합니다.', 'info');
         saveSystem.autoSave();
       });
